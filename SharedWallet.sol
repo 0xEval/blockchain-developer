@@ -1,76 +1,43 @@
+//SPDX-License-Identifier: MIT
+
 pragma solidity ^0.8.1;
+
+import "./Beneficiary.sol";
 
 /**
  * @author Eval (0xeval)
  * @title A simple shared wallet contract
  */
 
-contract Wallet {
+contract SharedWallet is Beneficiary {
     
-        event Deposit(address _from, uint _amount);
+        event DepositReceived(address _from, uint _amount);
         event Withdrawal(address _to, uint _amount);
-        event NewBeneficiary(address _identifier);
         
-        modifier onlyOwner {
-            require(msg.sender == owner, "You are not the owner.");
-            _;
+        constructor() payable {
+            addBeneficiary(msg.sender, type(uint256).max); 
         }
-        
-        modifier onlyBeneficiary {
-            require(beneficiaries[msg.sender].id != address(0), "You are not a beneficiary.");
-            _;
+
+        receive() external payable {
+            emit DepositReceived(msg.sender, msg.value);
         }
-    
-        struct Beneficiary {
-            uint allowance;
-            uint balance;
-            address id;
-        }
-        
-        mapping (address => Beneficiary) public beneficiaries;
-        
-        address public owner;
-        uint private totalBalance;
-        uint private defaultAllowance = 0.1 ether;
-        
-    
-        constructor() {
-            owner = msg.sender;
-            beneficiaries[msg.sender].id = owner;
-            beneficiaries[msg.sender].allowance = type(uint256).max;
-            beneficiaries[msg.sender].balance = 0;
-            
+
+        /**
+         * @dev Overrides OpenZeppelin's Ownable default function to prevent
+         * owner-less contract.  
+         */
+        function renounceOwnership() public view override onlyOwner {
+            revert("Cannot renounce ownership");
         }
         
         /**
-         * Deposits money in the Wallet.
+         * @dev Overrides OpenZeppelin's ownership transfer function to update
+         * Wallet's beneficiaries. Transfering ownership removes entirely the previous owner of the beneficiaries.
          */
-        function deposit() public payable {
-            totalBalance += msg.value;
-            emit Deposit(msg.sender, msg.value);
-        }
-        
-        /**
-         * Adds a beneficiary to the Wallet.
-         * 
-         * @param _identifier the EoA address of the new beneficiary
-         */
-        function addBeneficiary(address _identifier) public onlyOwner {
-            beneficiaries[_identifier].allowance = defaultAllowance;
-            beneficiaries[_identifier].balance = 0;
-            beneficiaries[_identifier].id = _identifier;
-            emit NewBeneficiary(_identifier);
-        }
-        
-        /**
-         * Change the allowance of a given beneficiary.
-         * 
-         * @param _id the address of a beneficiary.
-         * @param _allowance the new allowance amount.
-         */
-        function changeAllowance(address _id, uint _allowance) public onlyOwner {
-            require(_allowance >= 0);
-            beneficiaries[_id].allowance = _allowance;
+        function transferOwnership(address _newOwner) public override onlyOwner {
+            super.transferOwnership(_newOwner);
+            removeBeneficiary(owner());
+            addBeneficiary(_newOwner, type(uint256).max);
         }
         
         /**
@@ -80,11 +47,11 @@ contract Wallet {
          * 
          * @param _amount the withdrawal amount
         */
-        function withdraw(uint _amount) public onlyBeneficiary {
-            require(beneficiaries[msg.sender].balance + _amount <= beneficiaries[msg.sender].allowance, "Withdrawal amount above allowance.");
-            beneficiaries[msg.sender].balance += _amount;
-            payable(msg.sender).transfer(_amount);
+        function withdraw(uint _amount) public onlyOwnerOrBeneficiary {
+            require(beneficiaries[msg.sender].allowance >= _amount, "Withdrawal amount above allowance.");
             emit Withdrawal(msg.sender, _amount);
+            beneficiaries[msg.sender].allowance -= _amount;
+            payable(msg.sender).transfer(_amount);
         }
         
         /**
@@ -92,6 +59,7 @@ contract Wallet {
          * Must be called by _owner_.
          */
         function withdrawAll() public onlyOwner {
+            emit Withdrawal(msg.sender, address(this).balance);
             withdraw(address(this).balance);
         }
         
